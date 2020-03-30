@@ -52,12 +52,15 @@ const char LispLibrary[] PROGMEM = "";
 #define push(x, y)         ((y) = cons((x),(y)))
 #define pop(y)             ((y) = cdr(y))
 
-#define integerp(x)        ((x) != NULL && (x)->type == NUMBER)
-#define floatp(x)          ((x) != NULL && (x)->type == FLOAT)
-#define symbolp(x)         ((x) != NULL && (x)->type == SYMBOL)
-#define stringp(x)         ((x) != NULL && (x)->type == STRING)
-#define characterp(x)      ((x) != NULL && (x)->type == CHARACTER)
-#define streamp(x)         ((x) != NULL && (x)->type == STREAM)
+#define immediatep(x)      ((x) != NULL && ((uintptr_t)(x) & 2) == 2) // All immediates.
+#define fixnump(x)         ((x) != NULL && ((uintptr_t)(x) & 6) == 2) // Tagged integers.
+
+#define integerp(x)        ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == NUMBER)
+#define floatp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == FLOAT)
+#define symbolp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == SYMBOL)
+#define stringp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STRING)
+#define characterp(x)      ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == CHARACTER)
+#define streamp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STREAM)
 
 #define mark(x)            (car(x) = (object *)(((uintptr_t)(car(x))) | MARKBIT))
 #define unmark(x)          (car(x) = (object *)(((uintptr_t)(car(x))) & ~MARKBIT))
@@ -70,9 +73,21 @@ const char LispLibrary[] PROGMEM = "";
 
 // Constants
 
+// Type identifiers. Four last bits fixed at 6.
+#define ZERO 0 // (0 << 4 | 6)
+#define SYMBOL 22 // (1 << 4 | 6)
+#define NUMBER 38 // (2 << 4 | 6)
+#define STREAM 54 // (3 << 4 | 6)
+#define CHARACTER 70 // (4 << 4 | 6)
+#define FLOAT 86 // (5 << 4 | 6)
+#define STRING 102 // (6 << 4 | 6)
+
+#define BRA 0x8006 // Same value space as types, but high bit set.
+#define KET 0xA006 // Using the next two bits to code four values.
+#define QUO 0xC006 // I doubt this will collide with types any time soon.
+#define DOT 0xE006
+
 const int TRACEMAX = 3; // Number of traced functions
-enum type { ZERO=0, SYMBOL=2, NUMBER=4, STREAM=6, CHARACTER=8, FLOAT=10, STRING=12, PAIR=14 };  // STRING and PAIR must be last
-enum token { UNUSED, BRA, KET, QUO, DOT };
 enum stream { SERIALSTREAM, I2CSTREAM, SPISTREAM, SDSTREAM };
 
 enum function { NIL, TEE, NOTHING, OPTIONAL, AMPREST, LAMBDA, LET, LETSTAR, CLOSURE, SPECIAL_FORMS, QUOTE,
@@ -229,6 +244,7 @@ object *myalloc () {
 }
 
 inline void myfree (object *obj) {
+  if (((uintptr_t)obj & 2) != 0) return; // decline non-pointers
   car(obj) = NULL;
   cdr(obj) = Freelist;
   Freelist = obj;
@@ -238,10 +254,14 @@ inline void myfree (object *obj) {
 // Make each type of object
 
 object *number (int n) {
-  object *ptr = myalloc();
-  ptr->type = NUMBER;
-  ptr->integer = n;
-  return ptr;
+  if (n > 4095 || n < -4096) {
+    object *ptr = myalloc();
+    ptr->type = NUMBER;
+    ptr->integer = n;
+    return ptr;
+  } else {
+    return (object *)((n << 3) | 2);
+  }
 }
 
 object *character (char c) {
@@ -285,14 +305,18 @@ object *stream (unsigned char streamtype, unsigned char address) {
 void markobject (object *obj) {
   MARK:
   if (obj == NULL) return;
+  if (((uintptr_t)obj & 2) != 0) return; // make sure it doesn't try to deref non-pointers
   if (marked(obj)) return;
 
   object* arg = car(obj);
   unsigned int type = obj->type;
   mark(obj);
   
-  if (type >= PAIR || type == ZERO) { // cons
+  if ((type & 2) == 0) { // cons with allocated car
     markobject(arg);
+    obj = cdr(obj);
+    goto MARK;
+  } else if ((type & 15) != 6) { // cons with immediate car
     obj = cdr(obj);
     goto MARK;
   }
@@ -604,27 +628,30 @@ void untrace (symbol_t name) {
 // Helper functions
 
 boolean consp (object *x) {
-  if (x == NULL) return false;
+  if (x == NULL || ((uintptr_t)x&3) != 0) return false; // Not a cons if immediate.
   unsigned int type = x->type;
-  return type >= PAIR || type == ZERO;
+  return (type & 14) != 6; // It's a cons if the type field isn't a type identifier.
 }
 
 boolean atom (object *x) {
-  if (x == NULL) return true;
+  if (x == NULL) return true; // NIL is a symbol, so true.
+  if (((uintptr_t)x&2) == 2) return true; // If the 2-bit is set, this is not a cons.
   unsigned int type = x->type;
-  return type < PAIR && type != ZERO;
+  return (type & 2) != 0; // If the 2-bit isn't set on the type field, this is a cons.
 }
 
 boolean listp (object *x) {
-  if (x == NULL) return true;
+  if (x == NULL) return true; // NIL is the empty list, so true.
+  if (((uintptr_t)x&2) != 0) return false; // If the 2-bit is set, this is an immediate value.
   unsigned int type = x->type;
-  return type >= PAIR || type == ZERO;
+  return (type & 14) != 6; // It's a cons if the type field isn't a type identifier.
 }
 
 boolean improperp (object *x) {
-  if (x == NULL) return false;
-  unsigned int type = x->type;
-  return type < PAIR && type != ZERO;
+  if (x == NULL) return false; // NIL is a proper list.
+  if (((uintptr_t)x&2) != 0) return false; // If the 2-bit is set, this is not a cons.
+  uintptr_t tail = (uintptr_t)x->cdr;
+  return (tail&2) != 0; // If the cdr is not a pointer, this is a dotted cons.
 }
 
 int toradix40 (char ch) {
@@ -669,8 +696,13 @@ char *symbolname (symbol_t x) {
 }
 
 int checkinteger (symbol_t name, object *obj) {
-  if (!integerp(obj)) error(name, PSTR("argument is not an integer"), obj);
-  return obj->integer;
+  if (integerp(obj)) {
+    return obj->integer;
+  } else if (fixnump(obj)) {
+    return (int)obj>>3; // Tagged integer, three bits go away.
+  } else {
+    error(name, PSTR("argument is not an integer"), obj);
+  }
 }
 
 int checkchar (symbol_t name, object *obj) {
@@ -1346,7 +1378,7 @@ object *sp_defun (object *args, object *env) {
   (void) env;
   checkargs(DEFUN, args);
   object *var = first(args);
-  if (var->type != SYMBOL) error(DEFUN, PSTR("not a symbol"), var);
+  if (((uintptr_t)var&2) == 0 && var->type != SYMBOL) error(DEFUN, PSTR("not a symbol"), var);
   object *val = cons(symbol(LAMBDA), cdr(args));
   object *pair = value(var->name,GlobalEnv);
   if (pair != NULL) { cdr(pair) = val; return var; }
@@ -1357,7 +1389,7 @@ object *sp_defun (object *args, object *env) {
 object *sp_defvar (object *args, object *env) {
   checkargs(DEFVAR, args);
   object *var = first(args);
-  if (var->type != SYMBOL) error(DEFVAR, PSTR("not a symbol"), var);
+  if (((uintptr_t)var&2) == 0 && var->type != SYMBOL) error(DEFVAR, PSTR("not a symbol"), var);
   object *val = NULL;
   val = eval(second(args), env);
   object *pair = value(var->name, GlobalEnv);
@@ -1594,6 +1626,7 @@ object *sp_withi2c (object *args, object *env) {
   if (params != NULL) {
     object *rw = eval(first(params), env);
     if (integerp(rw)) I2CCount = rw->integer;
+    if (fixnump(rw)) I2CCount = (int)rw>>3;
     read = (rw != NULL);
   }
   I2Cinit(1); // Pullups
@@ -2418,7 +2451,7 @@ object *fn_sort (object *args, object *env) {
 object *fn_stringfn (object *args, object *env) {
   (void) env;
   object *arg = first(args);
-  int type = arg->type;
+  int type = (((uintptr_t)arg&2) == 0) ? arg->type : ZERO; // FIXME: Immediates may need to be handled.
   if (type == STRING) return arg;
   object *obj = myalloc();
   obj->type = STRING;
@@ -2446,7 +2479,7 @@ object *fn_stringfn (object *args, object *env) {
 object *fn_concatenate (object *args, object *env) {
   (void) env;
   object *arg = first(args);
-  symbol_t name = arg->name;
+  symbol_t name = (((uintptr_t)arg&2) == 0) ? arg->name : NULL;
   if (name != STRINGFN) error2(CONCATENATE, PSTR("only supports strings"));
   args = cdr(args);
   object *result = myalloc();
@@ -2724,6 +2757,7 @@ object *fn_restarti2c (object *args, object *env) {
   if (args != NULL) {
     object *rw = first(args);
     if (integerp(rw)) I2CCount = rw->integer;
+    if (fixnump(rw)) I2CCount = (int)rw>>3;
     read = (rw != NULL);
   }
   int address = stream & 0xFF;
@@ -2795,6 +2829,7 @@ object *fn_digitalwrite (object *args, object *env) {
   int pin = checkinteger(DIGITALWRITE, first(args));
   object *mode = second(args);
   if (integerp(mode)) digitalWrite(pin, mode->integer ? HIGH : LOW);
+  else if (fixnump(mode)) digitalWrite(pin, (int)mode>>3 ? HIGH : LOW);
   else digitalWrite(pin, (mode != nil) ? HIGH : LOW);
   return mode;
 }
@@ -3456,7 +3491,8 @@ object *eval (object *form, object *env) {
   
   if (form == NULL) return nil;
 
-  if (integerp(form) || floatp(form) || characterp(form) || stringp(form)) return form;
+  if (fixnump(form)) return form; // Immediate types. (Just the one now.)
+  if (integerp(form) || floatp(form) || characterp(form) || stringp(form)) return form; // Allocated types.
 
   if (symbolp(form)) {
     symbol_t name = form->name;
@@ -3686,6 +3722,7 @@ void printobject (object *form, pfun_t pfun){
     }
     pfun(')');
   } else if (integerp(form)) pint(form->integer, pfun);
+  else if (fixnump(form)) { pint((int)form>>3, pfun); }
   else if (symbolp(form)) { if (form->name != NOTHING) pstring(symbolname(form->name), pfun); }
   else if (characterp(form)) pcharacter(form->integer, pfun);
   else if (stringp(form)) printstring(form, pfun);
