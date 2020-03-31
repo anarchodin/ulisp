@@ -102,7 +102,7 @@ STRINGP, STRINGEQ, STRINGLESS, STRINGGREATER, SORT, STRINGFN, CONCATENATE, SUBSE
 PRINCTOSTRING, PRIN1TOSTRING, LOGAND, LOGIOR, LOGXOR, LOGNOT, ASH, LOGBITP, EVAL, GLOBALS, LOCALS,
 MAKUNBOUND, BREAK, READ, PRIN1, PRINT, PRINC, TERPRI, READBYTE, READLINE, WRITEBYTE, WRITESTRING,
 WRITELINE, RESTARTI2C, GC, ROOM, SAVEIMAGE, LOADIMAGE, CLS, PINMODE, DIGITALREAD, DIGITALWRITE,
-ANALOGREAD, ANALOGWRITE, DELAY, MILLIS, SLEEP, NOTE, EDIT, PPRINT, PPRINTALL, REQUIRE, LISTLIBRARY, ENDFUNCTIONS };
+ANALOGREAD, ANALOGWRITE, DELAY, MILLIS, SLEEP, NOTE, EDIT, PPRINT, PPRINTALL, REQUIRE, LISTLIBRARY, FIXNUMP, ENDFUNCTIONS };
 
 // Typedefs
 
@@ -2352,6 +2352,11 @@ object *fn_integerp (object *args, object *env) {
   return integerp(first(args)) ? tee : nil;
 }
 
+object *fn_fixnump (object *args, object *env) {
+  (void) env;
+  return fixnump(first(args)) ? tee : nil;
+}
+
 object *fn_numberp (object *args, object *env) {
   (void) env;
   object *test = first(args);
@@ -3231,6 +3236,7 @@ const char string156[] PROGMEM = "pprint";
 const char string157[] PROGMEM = "pprintall";
 const char string158[] PROGMEM = "require";
 const char string159[] PROGMEM = "list-library";
+const char string160[] PROGMEM = "fixnump";
 
 const tbl_entry_t lookup_table[] PROGMEM = {
   { string0, NULL, 0, 0 },
@@ -3393,6 +3399,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string157, fn_pprintall, 0, 0 },
   { string158, fn_require, 1, 1 },
   { string159, fn_listlibrary, 0, 0 },
+  { string160, fn_fixnump, 1, 1 },
 };
 
 // Table lookup functions
