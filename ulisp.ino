@@ -637,7 +637,7 @@ boolean atom (object *x) {
   if (x == NULL) return true; // NIL is a symbol, so true.
   if (((uintptr_t)x&2) == 2) return true; // If the 2-bit is set, this is not a cons.
   unsigned int type = x->type;
-  return (type & 2) != 0; // If the 2-bit isn't set on the type field, this is a cons.
+  return (type & 14) == 6; // It's an atom if there's a type identifier.
 }
 
 boolean listp (object *x) {
