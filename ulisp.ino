@@ -2354,7 +2354,14 @@ object *fn_integerp (object *args, object *env) {
 
 object *fn_numberp (object *args, object *env) {
   (void) env;
-  return integerp(first(args)) ? tee : nil;
+  object *test = first(args);
+  if (integerp(test)) {
+    return tee;
+  } else if (fixnump(test)) {
+    return tee;
+  } else {
+    return nil;
+  }
 }
 
 // Characters
